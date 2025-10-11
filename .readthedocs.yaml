@@ -19,6 +19,8 @@ build:
     - cloc
   jobs:
     pre_create_environment:
+      - pip install hfutils
+      - hfutils whoami
       - make dataset
 
 formats:
