@@ -33,7 +33,10 @@ from hfutils.utils import hf_fs_path, hf_normpath
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import OfflineModeIsEnabled, EntryNotFoundError
 
-from ..data import load_image, rgb_encode, ImageTyping
+from ..data import (
+    load_image, load_images, rgb_encode, ImageTyping, MultiImagesTyping,
+    normalize_multi_images, restore_multi_images_result,
+)
 from ..utils import open_onnx_model, ts_lru_cache
 
 try:
@@ -667,7 +670,7 @@ class YOLOModel:
 
         return self._model_thresholds[model_name]
 
-    def predict(self, image: ImageTyping, model_name: str,
+    def predict(self, image: MultiImagesTyping, model_name: str,
                 conf_threshold: Optional[float] = None, iou_threshold: float = 0.7,
                 allow_dynamic: bool = False) \
             -> List[Tuple[Tuple[int, int, int, int], str, float]]:
@@ -705,33 +708,41 @@ class YOLOModel:
             if conf_threshold is None:
                 conf_threshold = 0.25  # default threshold from YOLO official implement
 
+        _, is_multi = normalize_multi_images(image)
         model, max_infer_size, labels, exec_lock = self._open_model(model_name)
-        image = load_image(image, mode='RGB')
-        new_image, old_size, new_size = _image_preprocess(image, max_infer_size, allow_dynamic=allow_dynamic)
-        data = rgb_encode(new_image)[None, ...]
+        images = load_images(image, mode='RGB')
+        items = []
+        for image_item in images:
+            new_image, old_size, new_size = _image_preprocess(image_item, max_infer_size, allow_dynamic=allow_dynamic)
+            items.append((rgb_encode(new_image), old_size, new_size))
+        data = np.stack([item[0] for item in items])
         with exec_lock:  # make sure for each session, its execution should be linear
             output, = model.run(['output0'], {'images': data})
         model_type = self._get_model_type(model_name=model_name)
+        results = []
         if model_type == 'yolo':
-            return _yolo_postprocess(
-                output=output[0],
-                conf_threshold=conf_threshold,
-                iou_threshold=iou_threshold,
-                old_size=old_size,
-                new_size=new_size,
-                labels=labels
-            )
+            for output_item, (_, old_size, new_size) in zip(output, items):
+                results.append(_yolo_postprocess(
+                    output=output_item,
+                    conf_threshold=conf_threshold,
+                    iou_threshold=iou_threshold,
+                    old_size=old_size,
+                    new_size=new_size,
+                    labels=labels
+                ))
         elif model_type == 'rtdetr':
-            return _rtdetr_postprocess(
-                output=output[0],
-                conf_threshold=conf_threshold,
-                iou_threshold=iou_threshold,
-                old_size=old_size,
-                new_size=new_size,
-                labels=labels
-            )
+            for output_item, (_, old_size, new_size) in zip(output, items):
+                results.append(_rtdetr_postprocess(
+                    output=output_item,
+                    conf_threshold=conf_threshold,
+                    iou_threshold=iou_threshold,
+                    old_size=old_size,
+                    new_size=new_size,
+                    labels=labels
+                ))
         else:
             raise ValueError(f'Unknown object detection model type - {model_type!r}.')  # pragma: no cover
+        return restore_multi_images_result(results, is_multi)
 
     def clear(self):
         """
@@ -987,7 +998,7 @@ def _open_models_for_repo_id(repo_id: str, hf_token: Optional[str] = None) -> YO
     return YOLOModel(repo_id, hf_token=hf_token)
 
 
-def yolo_predict(image: ImageTyping, repo_id: str, model_name: str,
+def yolo_predict(image: MultiImagesTyping, repo_id: str, model_name: str,
                  conf_threshold: Optional[float] = None, iou_threshold: float = 0.7,
                  hf_token: Optional[str] = None, **kwargs) \
         -> List[Tuple[Tuple[int, int, int, int], str, float]]:

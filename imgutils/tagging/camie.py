@@ -19,7 +19,7 @@ from huggingface_hub import hf_hub_download
 
 from .format import remove_underline
 from .overlap import drop_overlap_tags
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_images, normalize_multi_images, restore_multi_images_result
 from ..preprocess import create_pillow_transforms
 from ..utils import open_onnx_model, ts_lru_cache, vnames, vreplace
 
@@ -204,7 +204,7 @@ def _postprocess_embedding_values(
 
 
 def get_camie_tags(
-        image: ImageTyping,
+    image: MultiImagesTyping,
         model_name: str = _DEFAULT_MODEL_NAME,
         mode: CamieModeTyping = 'balanced',
         thresholds: Optional[Union[float, Dict[str, float]]] = None,
@@ -302,58 +302,66 @@ def get_camie_tags(
             need_full = True
             break
 
-    image = load_image(image, force_background='white', mode='RGB')
-    input_ = _get_camie_preprocessor(model_name)(image)[np.newaxis, ...]
+    _, is_multi = normalize_multi_images(image)
+    images = load_images(image, force_background='white', mode='RGB')
+    input_ = np.stack([_get_camie_preprocessor(model_name)(item) for item in images])
 
     if need_full:
         model = _get_camie_model(model_name, is_full=True)
         init_embedding, init_logits, init_pred, refined_embedding, refined_logits, refined_pred = \
             model.run(["initial/embedding", "initial/logits", "initial/output", "embedding", "logits", "output"],
                       {'input': input_})
-        init_values = _postprocess_embedding_values(
-            pred=init_pred[0],
-            logits=init_logits[0],
-            embedding=init_embedding[0],
-            model_name=model_name,
-            mode=mode,
-            thresholds=thresholds,
-            drop_overlap=drop_overlap,
-        )
-        refined_values = _postprocess_embedding_values(
-            pred=refined_pred[0],
-            logits=refined_logits[0],
-            embedding=refined_embedding[0],
-            model_name=model_name,
-            mode=mode,
-            thresholds=thresholds,
-            no_underline=no_underline,
-            drop_overlap=drop_overlap,
-        )
-        values = {
-            **refined_values,
-            **{f'initial/{key}': value for key, value in init_values.items()},
-            **{f'refined/{key}': value for key, value in refined_values.items()},
-        }
+        results = []
+        for init_emb_item, init_logits_item, init_pred_item, refined_emb_item, refined_logits_item, refined_pred_item in \
+                zip(init_embedding, init_logits, init_pred, refined_embedding, refined_logits, refined_pred):
+            init_values = _postprocess_embedding_values(
+                pred=init_pred_item,
+                logits=init_logits_item,
+                embedding=init_emb_item,
+                model_name=model_name,
+                mode=mode,
+                thresholds=thresholds,
+                drop_overlap=drop_overlap,
+            )
+            refined_values = _postprocess_embedding_values(
+                pred=refined_pred_item,
+                logits=refined_logits_item,
+                embedding=refined_emb_item,
+                model_name=model_name,
+                mode=mode,
+                thresholds=thresholds,
+                no_underline=no_underline,
+                drop_overlap=drop_overlap,
+            )
+            values = {
+                **refined_values,
+                **{f'initial/{key}': value for key, value in init_values.items()},
+                **{f'refined/{key}': value for key, value in refined_values.items()},
+            }
+            results.append(vreplace(fmt, values))
 
     else:
         model = _get_camie_model(model_name, is_full=False)
         init_embedding, init_logits, init_pred = \
             model.run(["embedding", "logits", "output"], {'input': input_})
-        init_values = _postprocess_embedding_values(
-            pred=init_pred[0],
-            logits=init_logits[0],
-            embedding=init_embedding[0],
-            model_name=model_name,
-            mode=mode,
-            thresholds=thresholds,
-            no_underline=no_underline,
-            drop_overlap=drop_overlap,
-        )
-        values = {
-            **{f'initial/{key}': value for key, value in init_values.items()},
-        }
+        results = []
+        for init_emb_item, init_logits_item, init_pred_item in zip(init_embedding, init_logits, init_pred):
+            init_values = _postprocess_embedding_values(
+                pred=init_pred_item,
+                logits=init_logits_item,
+                embedding=init_emb_item,
+                model_name=model_name,
+                mode=mode,
+                thresholds=thresholds,
+                no_underline=no_underline,
+                drop_overlap=drop_overlap,
+            )
+            values = {
+                **{f'initial/{key}': value for key, value in init_values.items()},
+            }
+            results.append(vreplace(fmt, values))
 
-    return vreplace(fmt, values)
+    return restore_multi_images_result(results, is_multi)
 
 
 @ts_lru_cache()

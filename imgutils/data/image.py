@@ -23,6 +23,9 @@ __all__ = [
     'load_image',
     'MultiImagesTyping',
     'load_images',
+    'is_multi_images',
+    'normalize_multi_images',
+    'restore_multi_images_result',
     'add_background_for_rgba',
     'has_alpha_channel',
 ]
@@ -43,6 +46,50 @@ def _is_readable(obj):
 
 ImageTyping = Union[str, PathLike, bytes, bytearray, BinaryIO, Image.Image]
 MultiImagesTyping = Union[ImageTyping, List[ImageTyping], Tuple[ImageTyping, ...]]
+
+
+def is_multi_images(images: MultiImagesTyping) -> bool:
+    """
+    Determine whether the given input should be treated as multiple images.
+
+    :param images: Image input or multiple image inputs.
+    :type images: MultiImagesTyping
+    :return: Whether the input is a list or tuple of images.
+    :rtype: bool
+    """
+    return isinstance(images, (list, tuple))
+
+
+def normalize_multi_images(images: MultiImagesTyping) -> Tuple[List[ImageTyping], bool]:
+    """
+    Normalize image inputs into a list while remembering whether the caller passed multiple images.
+
+    :param images: Image input or multiple image inputs.
+    :type images: MultiImagesTyping
+    :return: Tuple of normalized image list and whether the original input was plural.
+    :rtype: Tuple[List[ImageTyping], bool]
+    """
+    is_multi = is_multi_images(images)
+    if is_multi:
+        return list(images), True
+    else:
+        return [images], False
+
+
+def restore_multi_images_result(results: List, is_multi: bool):
+    """
+    Restore a normalized result back to scalar form when the original input was a single image.
+
+    :param results: Result list matching normalized image inputs.
+    :type results: List
+    :param is_multi: Whether the original input was plural.
+    :type is_multi: bool
+    :return: Original list for plural input, otherwise the first item.
+    """
+    if is_multi:
+        return results
+    else:
+        return results[0]
 
 
 def has_alpha_channel(image: Image.Image) -> bool:

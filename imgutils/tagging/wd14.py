@@ -18,7 +18,7 @@ from huggingface_hub import hf_hub_download
 
 from .format import remove_underline
 from .overlap import drop_overlap_tags
-from ..data import load_image, ImageTyping
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, vreplace, sigmoid, ts_lru_cache
 
 SWIN_MODEL_REPO = "SmilingWolf/wd-v1-4-swinv2-tagger-v2"
@@ -253,7 +253,7 @@ def _postprocess_embedding(
 
 
 def get_wd14_tags(
-        image: ImageTyping,
+    image: MultiImagesTyping,
         model_name: str = _DEFAULT_MODEL_NAME,
         general_threshold: float = 0.35,
         general_mcut_enabled: bool = False,
@@ -337,7 +337,8 @@ def get_wd14_tags(
 
     model = _get_wd14_model(model_name)
     _, target_size, _, _ = model.get_inputs()[0].shape
-    image = _prepare_image_for_tagging(image, target_size)
+    images, is_multi = normalize_multi_images(image)
+    image = np.concatenate([_prepare_image_for_tagging(item, target_size) for item in images], axis=0)
 
     input_name = model.get_inputs()[0].name
     assert len(model.get_outputs()) == 2
@@ -345,18 +346,22 @@ def get_wd14_tags(
     emb_name = model.get_outputs()[1].name
     preds, embeddings = model.run([label_name, emb_name], {input_name: image})
 
-    return _postprocess_embedding(
-        pred=preds[0],
-        embedding=embeddings[0],
-        model_name=model_name,
-        general_threshold=general_threshold,
-        general_mcut_enabled=general_mcut_enabled,
-        character_threshold=character_threshold,
-        character_mcut_enabled=character_mcut_enabled,
-        no_underline=no_underline,
-        drop_overlap=drop_overlap,
-        fmt=fmt,
-    )
+    results = [
+        _postprocess_embedding(
+            pred=pred_item,
+            embedding=embedding_item,
+            model_name=model_name,
+            general_threshold=general_threshold,
+            general_mcut_enabled=general_mcut_enabled,
+            character_threshold=character_threshold,
+            character_mcut_enabled=character_mcut_enabled,
+            no_underline=no_underline,
+            drop_overlap=drop_overlap,
+            fmt=fmt,
+        )
+        for pred_item, embedding_item in zip(preds, embeddings)
+    ]
+    return restore_multi_images_result(results, is_multi)
 
 
 _DEFAULT_DENORMALIZER_NAME = 'mnum2_all'

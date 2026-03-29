@@ -35,7 +35,7 @@ from hfutils.repository import hf_hub_repo_url
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 
-from ..data import ImageTyping, load_image
+from ..data import MultiImagesTyping, ImageTyping, load_images, normalize_multi_images, restore_multi_images_result
 from ..preprocess import create_pillow_transforms
 from ..utils import open_onnx_model
 from ..utils import vreplace, ts_lru_cache
@@ -205,7 +205,7 @@ class MultiLabelTIMMModel:
 
         return self._default_category_thresholds
 
-    def _raw_predict(self, image: ImageTyping, preprocessor: Literal['test', 'val'] = 'test'):
+    def _raw_predict(self, image: MultiImagesTyping, preprocessor: Literal['test', 'val'] = 'test'):
         """
         Make a raw prediction with the model.
 
@@ -218,7 +218,6 @@ class MultiLabelTIMMModel:
         :rtype: dict
         :raises ValueError: If an unknown preprocessor is specified
         """
-        image = load_image(image, force_background='white', mode='RGB')
         model = self._open_model()
 
         val_trans, test_trans = self._open_preprocess()
@@ -230,12 +229,13 @@ class MultiLabelTIMMModel:
             raise ValueError(
                 f'Unknown processor, "test" or "val" expected but {preprocessor!r} found.')  # pragma: no cover
 
-        input_ = trans(image)[None, ...]
+        images = load_images(image, force_background='white', mode='RGB')
+        input_ = np.stack([trans(item) for item in images])
         output_names = [output.name for output in model.get_outputs()]
         output_values = model.run(output_names, {'input': input_})
-        return {name: value[0] for name, value in zip(output_names, output_values)}
+        return {name: value for name, value in zip(output_names, output_values)}
 
-    def predict(self, image: ImageTyping, preprocessor: Literal['test', 'val'] = 'test',
+    def predict(self, image: MultiImagesTyping, preprocessor: Literal['test', 'val'] = 'test',
                 thresholds: Union[float, Dict[Any, float]] = None, use_tag_thresholds: bool = True,
                 fmt=FMT_UNSET):
         """
@@ -273,10 +273,9 @@ class MultiLabelTIMMModel:
 
         For more details see documentation of :func:`multilabel_timm_predict`.
         """
+        _, is_multi = normalize_multi_images(image)
         df_tags = self._open_tags()
-        values = self._raw_predict(image, preprocessor=preprocessor)
-        prediction = values['prediction']
-        tags = {}
+        raw_values = self._raw_predict(image, preprocessor=preprocessor)
 
         if fmt is FMT_UNSET:
             fmt = tuple(self._category_names[category] for category in sorted(set(df_tags['category'].tolist())))
@@ -286,40 +285,50 @@ class MultiLabelTIMMModel:
             default_tag_thresholds = self._df_tags['best_threshold']
         else:
             default_tag_thresholds = None
-        for category in sorted(set(df_tags['category'].tolist())):
-            mask = df_tags['category'] == category
-            tag_names = df_tags['name'][mask]
-            category_pred = prediction[mask]
 
-            if isinstance(thresholds, float):
-                category_threshold = thresholds
-            elif isinstance(thresholds, dict) and \
-                    (category in thresholds or self._category_names[category] in thresholds):
-                if category in thresholds:
-                    category_threshold = thresholds[category]
-                elif self._category_names[category] in thresholds:
-                    category_threshold = thresholds[self._category_names[category]]
+        results = []
+        batch_size = raw_values['prediction'].shape[0]
+        for index in range(batch_size):
+            values = {name: value[index] for name, value in raw_values.items()}
+            prediction = values['prediction']
+            tags = {}
+
+            for category in sorted(set(df_tags['category'].tolist())):
+                mask = df_tags['category'] == category
+                tag_names = df_tags['name'][mask]
+                category_pred = prediction[mask]
+
+                if isinstance(thresholds, float):
+                    category_threshold = thresholds
+                elif isinstance(thresholds, dict) and \
+                        (category in thresholds or self._category_names[category] in thresholds):
+                    if category in thresholds:
+                        category_threshold = thresholds[category]
+                    elif self._category_names[category] in thresholds:
+                        category_threshold = thresholds[self._category_names[category]]
+                    else:
+                        assert False, 'Should not reach this line'  # pragma: no cover
+                elif use_tag_thresholds and default_tag_thresholds is not None:
+                    category_threshold = default_tag_thresholds[mask]
                 else:
-                    assert False, 'Should not reach this line'  # pragma: no cover
-            elif use_tag_thresholds and default_tag_thresholds is not None:
-                category_threshold = default_tag_thresholds[mask]
-            else:
-                if use_tag_thresholds:
-                    warnings.warn(f'Tag thresholds not supported in model {self.repo_id!r}.')
-                if category in default_category_thresholds:
-                    category_threshold = default_category_thresholds[category]
-                else:
-                    category_threshold = 0.4
+                    if use_tag_thresholds:
+                        warnings.warn(f'Tag thresholds not supported in model {self.repo_id!r}.')
+                    if category in default_category_thresholds:
+                        category_threshold = default_category_thresholds[category]
+                    else:
+                        category_threshold = 0.4
 
-            mask = category_pred >= category_threshold
-            tag_names = tag_names[mask].tolist()
-            category_pred = category_pred[mask].tolist()
-            cate_tags = dict(sorted(zip(tag_names, category_pred), key=lambda x: (-x[1], x[0])))
-            values[self._category_names[category]] = cate_tags
-            tags.update(cate_tags)
+                mask = category_pred >= category_threshold
+                tag_names = tag_names[mask].tolist()
+                category_pred = category_pred[mask].tolist()
+                cate_tags = dict(sorted(zip(tag_names, category_pred), key=lambda x: (-x[1], x[0])))
+                values[self._category_names[category]] = cate_tags
+                tags.update(cate_tags)
 
-        values['tag'] = tags
-        return vreplace(fmt, values)
+            values['tag'] = tags
+            results.append(vreplace(fmt, values))
+
+        return restore_multi_images_result(results, is_multi)
 
     def make_ui(self, default_thresholds: Union[float, Dict[Any, float]] = None,
                 default_use_tag_thresholds: bool = True):
@@ -489,7 +498,7 @@ def _open_models_for_repo_id(repo_id: str, hf_token: Optional[str] = None) \
     )
 
 
-def multilabel_timm_predict(image: ImageTyping, repo_id: str,
+def multilabel_timm_predict(image: MultiImagesTyping, repo_id: str,
                             preprocessor: Literal['test', 'val'] = 'test',
                             thresholds: Union[float, Dict[Any, float]] = None, use_tag_thresholds: bool = True,
                             fmt=FMT_UNSET, hf_token: Optional[str] = None):

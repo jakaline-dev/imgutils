@@ -5,7 +5,10 @@ Overview:
 import numpy as np
 from PIL import Image
 
-from ..data import ImageTyping, load_image, has_alpha_channel
+from ..data import (
+    ImageTyping, MultiImagesTyping, load_image, has_alpha_channel,
+    normalize_multi_images, restore_multi_images_result,
+)
 
 __all__ = [
     'ImageEnhancer',
@@ -79,7 +82,7 @@ class ImageEnhancer:
             self._process_alpha_channel_with_model(rgba_array[3, ...])[None, ...]
         ], axis=0)
 
-    def process(self, image: ImageTyping):
+    def process(self, image: MultiImagesTyping):
         """
         Enhances the input image.
 
@@ -89,13 +92,19 @@ class ImageEnhancer:
         :return: The enhanced image.
         :rtype: Image.Image
         """
-        image = load_image(image, mode=None, force_background=None)
-        mode = 'RGBA' if has_alpha_channel(image) else 'RGB'
-        image = load_image(image, mode=mode, force_background=None)
-        input_array = (np.array(image).astype(np.float32) / 255.0).transpose((2, 0, 1))
-        if has_alpha_channel(image):
-            output_array = self._process_rgba(input_array)
-        else:
-            output_array = self._process_rgb(input_array)
-        output_array = (np.clip(output_array, a_min=0.0, a_max=1.0) * 255.0).astype(np.uint8).transpose((1, 2, 0))
-        return Image.fromarray(output_array, mode=mode)
+        images, is_multi = normalize_multi_images(image)
+        results = []
+        for image_item in images:
+            image_item = load_image(image_item, mode=None, force_background=None)
+            mode = 'RGBA' if has_alpha_channel(image_item) else 'RGB'
+            image_item = load_image(image_item, mode=mode, force_background=None)
+            input_array = (np.array(image_item).astype(np.float32) / 255.0).transpose((2, 0, 1))
+            if has_alpha_channel(image_item):
+                output_array = self._process_rgba(input_array)
+            else:
+                output_array = self._process_rgb(input_array)
+            output_array = (np.clip(output_array, a_min=0.0, a_max=1.0) * 255.0).astype(np.uint8)
+            output_array = output_array.transpose((1, 2, 0))
+            results.append(Image.fromarray(output_array, mode=mode))
+
+        return restore_multi_images_result(results, is_multi)

@@ -7,7 +7,10 @@ import cv2
 import huggingface_hub
 import numpy as np
 
-from ..data import ImageTyping, load_image, istack
+from ..data import (
+    ImageTyping, MultiImagesTyping, load_image, istack,
+    normalize_multi_images, restore_multi_images_result,
+)
 from ..utils import ts_lru_cache
 from ..utils.onnxruntime import open_onnx_model
 
@@ -17,7 +20,7 @@ def _get_model():
     return open_onnx_model(huggingface_hub.hf_hub_download("skytnt/anime-seg", "isnetis.onnx"))
 
 
-def get_isnetis_mask(image: ImageTyping, scale: int = 1024):
+def _get_isnetis_mask_single(image: ImageTyping, scale: int = 1024):
     """
     Overview:
         Get mask with isnetis.
@@ -43,7 +46,13 @@ def get_isnetis_mask(image: ImageTyping, scale: int = 1024):
     return mask.reshape(*mask.shape[:-1])
 
 
-def segment_with_isnetis(image: ImageTyping, background: str = 'lime', scale: int = 1024):
+def get_isnetis_mask(image: MultiImagesTyping, scale: int = 1024):
+    images, is_multi = normalize_multi_images(image)
+    results = [_get_isnetis_mask_single(item, scale) for item in images]
+    return restore_multi_images_result(results, is_multi)
+
+
+def segment_with_isnetis(image: MultiImagesTyping, background: str = 'lime', scale: int = 1024):
     """
     Overview:
         Segment image with pure color background.
@@ -69,12 +78,16 @@ def segment_with_isnetis(image: ImageTyping, background: str = 'lime', scale: in
            :align: center
 
     """
-    image = load_image(image, mode='RGB')
-    mask = get_isnetis_mask(image, scale)
-    return mask, istack((background, 1.0), (image, mask)).convert('RGB')
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item, mode='RGB')
+        mask = _get_isnetis_mask_single(image_item, scale)
+        results.append((mask, istack((background, 1.0), (image_item, mask)).convert('RGB')))
+    return restore_multi_images_result(results, is_multi)
 
 
-def segment_rgba_with_isnetis(image: ImageTyping, scale: int = 1024):
+def segment_rgba_with_isnetis(image: MultiImagesTyping, scale: int = 1024):
     """
     Overview:
         Segment image with transparent background.
@@ -99,6 +112,10 @@ def segment_rgba_with_isnetis(image: ImageTyping, scale: int = 1024):
            :align: center
 
     """
-    image = load_image(image, mode='RGB')
-    mask = get_isnetis_mask(image, scale)
-    return mask, istack((image, mask))
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item, mode='RGB')
+        mask = _get_isnetis_mask_single(image_item, scale)
+        results.append((mask, istack((image_item, mask))))
+    return restore_multi_images_result(results, is_multi)

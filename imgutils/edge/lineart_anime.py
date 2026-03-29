@@ -9,7 +9,7 @@ import numpy as np
 from huggingface_hub import hf_hub_download
 
 from ._base import resize_image, cv2_resize, _get_image_edge
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 
@@ -28,7 +28,7 @@ def _open_la_anime_model():
     ))
 
 
-def get_edge_by_lineart_anime(image: ImageTyping, detect_resolution: int = 512):
+def get_edge_by_lineart_anime(image: MultiImagesTyping, detect_resolution: int = 512):
     """
     Overview:
         Get edge mask with lineart anime model.
@@ -37,11 +37,15 @@ def get_edge_by_lineart_anime(image: ImageTyping, detect_resolution: int = 512):
     :param detect_resolution: Resolution when passing the image into neural network. Default is ``512``.
     :return: A mask with format ``float32[H, W]``.
     """
-    image = load_image(image, mode='RGB')
-    output_, = _open_la_anime_model().run(['output'], {'input': _preprocess(image, detect_resolution)})
-    output_ = (output_ + 1.0) / 2.0
-    output_ = cv2_resize(output_[0].transpose(1, 2, 0), image.width, image.height)
-    return 1.0 - output_.clip(0.0, 1.0)
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item, mode='RGB')
+        output_, = _open_la_anime_model().run(['output'], {'input': _preprocess(image_item, detect_resolution)})
+        output_ = (output_ + 1.0) / 2.0
+        output_ = cv2_resize(output_[0].transpose(1, 2, 0), image_item.width, image_item.height)
+        results.append(1.0 - output_.clip(0.0, 1.0))
+    return restore_multi_images_result(results, is_multi)
 
 
 def edge_image_with_lineart_anime(image: ImageTyping, detect_resolution: int = 512,

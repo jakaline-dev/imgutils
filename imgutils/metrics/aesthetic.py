@@ -23,7 +23,7 @@ from deprecation import deprecated
 from huggingface_hub import hf_hub_download
 
 from ..config.meta import __VERSION__
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 __all__ = [
@@ -54,7 +54,7 @@ def _preprocess(image: Image.Image):
 
 @deprecated(deprecated_in='0.4.2', removed_in='1.0.0', current_version=__VERSION__,
             details='Deprecated due to the low effectiveness.')
-def get_aesthetic_score(image: ImageTyping):
+def get_aesthetic_score(image: MultiImagesTyping):
     """
     Overview:
         Get aesthetic score for image.
@@ -82,6 +82,8 @@ def get_aesthetic_score(image: ImageTyping):
         >>> get_aesthetic_score('5512471.jpg')
         0.9187621474266052
     """
-    image = load_image(image, mode='RGB')
-    retval, *_ = _open_aesthetic_model().run(None, {'img': _preprocess(image)})
-    return float(retval.item())
+    images, is_multi = normalize_multi_images(image)
+    input_ = np.concatenate([_preprocess(load_image(item, mode='RGB')) for item in images], axis=0)
+    retval, *_ = _open_aesthetic_model().run(None, {'img': input_})
+    results = [float(item.item()) for item in retval.reshape(-1)]
+    return restore_multi_images_result(results, is_multi)

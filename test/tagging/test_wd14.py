@@ -162,6 +162,19 @@ class TestTaggingWd14:
         }, abs=2e-2)
         assert chars == pytest.approx({'nian_(arknights)': 0.9968841671943665}, abs=2e-2)
 
+    def test_get_wd14_tags_multiple(self):
+        file = get_testfile('6124220.jpg')
+        single = get_wd14_tags(file)
+        multiple = get_wd14_tags([file, file])
+
+        assert len(multiple) == 2
+        assert multiple[0][0] == pytest.approx(single[0], abs=2e-2)
+        assert multiple[0][1] == pytest.approx(single[1], abs=2e-2)
+        assert multiple[0][2] == pytest.approx(single[2], abs=2e-2)
+        assert multiple[1][0] == pytest.approx(single[0], abs=2e-2)
+        assert multiple[1][1] == pytest.approx(single[1], abs=2e-2)
+        assert multiple[1][2] == pytest.approx(single[2], abs=2e-2)
+
     @pytest.mark.parametrize(['file'], [
         ('nude_girl.png',),
         ('nian.png',),

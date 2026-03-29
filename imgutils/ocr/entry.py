@@ -2,7 +2,7 @@ from typing import List, Tuple
 
 from .detect import _detect_text, _list_det_models
 from .recognize import _text_recognize, _list_rec_models
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 
 _DEFAULT_DET_MODEL = 'ch_PP-OCRv4_det'
 _DEFAULT_REC_MODEL = 'ch_PP-OCRv4_rec'
@@ -65,7 +65,7 @@ def list_rec_models() -> List[str]:
     return _list_rec_models()
 
 
-def detect_text_with_ocr(image: ImageTyping, model: str = _DEFAULT_DET_MODEL,
+def detect_text_with_ocr(image: MultiImagesTyping, model: str = _DEFAULT_DET_MODEL,
                          heat_threshold: float = 0.3, box_threshold: float = 0.7,
                          max_candidates: int = 1000, unclip_ratio: float = 2.0) \
         -> List[Tuple[Tuple[int, int, int, int], str, float]]:
@@ -103,14 +103,17 @@ def detect_text_with_ocr(image: ImageTyping, model: str = _DEFAULT_DET_MODEL,
     .. note::
         If you need to extract the actual text content, use the :func:`ocr` function.
     """
-    retval = []
-    for box, _, score in _detect_text(image, model, heat_threshold, box_threshold, max_candidates, unclip_ratio):
-        retval.append((box, 'text', score))
-    retval = sorted(retval, key=lambda x: x[2], reverse=True)
-    return retval
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        retval = []
+        for box, _, score in _detect_text(image_item, model, heat_threshold, box_threshold, max_candidates, unclip_ratio):
+            retval.append((box, 'text', score))
+        results.append(sorted(retval, key=lambda x: x[2], reverse=True))
+    return restore_multi_images_result(results, is_multi)
 
 
-def ocr(image: ImageTyping, detect_model: str = _DEFAULT_DET_MODEL,
+def ocr(image: MultiImagesTyping, detect_model: str = _DEFAULT_DET_MODEL,
         recognize_model: str = _DEFAULT_REC_MODEL, heat_threshold: float = 0.3, box_threshold: float = 0.7,
         max_candidates: int = 1000, unclip_ratio: float = 2.0, rotation_threshold: float = 1.5,
         is_remove_duplicate: bool = False):
@@ -182,17 +185,20 @@ def ocr(image: ImageTyping, detect_model: str = _DEFAULT_DET_MODEL,
         ]
 
     """
-    image = load_image(image)
-    retval = []
-    for (x0, y0, x1, y1), _, score in \
-            _detect_text(image, detect_model, heat_threshold, box_threshold, max_candidates, unclip_ratio):
-        width, height = x1 - x0, y1 - y0
-        area = image.crop((x0, y0, x1, y1))
-        if height >= width * rotation_threshold:
-            area = area.rotate(90)
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item)
+        retval = []
+        for (x0, y0, x1, y1), _, score in \
+                _detect_text(image_item, detect_model, heat_threshold, box_threshold, max_candidates, unclip_ratio):
+            width, height = x1 - x0, y1 - y0
+            area = image_item.crop((x0, y0, x1, y1))
+            if height >= width * rotation_threshold:
+                area = area.rotate(90)
 
-        text, rec_score = _text_recognize(area, recognize_model, is_remove_duplicate)
-        retval.append(((x0, y0, x1, y1), text, score * rec_score))
+            text, rec_score = _text_recognize(area, recognize_model, is_remove_duplicate)
+            retval.append(((x0, y0, x1, y1), text, score * rec_score))
 
-    retval = sorted(retval, key=lambda x: x[2], reverse=True)
-    return retval
+        results.append(sorted(retval, key=lambda x: x[2], reverse=True))
+    return restore_multi_images_result(results, is_multi)
