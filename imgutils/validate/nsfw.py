@@ -22,7 +22,7 @@ import numpy as np
 from PIL import Image
 from huggingface_hub import hf_hub_download
 
-from ..data import load_image, ImageTyping
+from ..data import load_image, ImageTyping, MultiImagesTyping, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 __all__ = [
@@ -82,7 +82,7 @@ def _image_preprocess(image, size: int = 224) -> np.ndarray:
 _LABELS = ['drawings', 'hentai', 'neutral', 'porn', 'sexy']
 
 
-def _raw_scores(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> np.ndarray:
+def _raw_scores(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME) -> np.ndarray:
     """
     Computes the raw prediction scores for the NSFW categories.
 
@@ -98,12 +98,16 @@ def _raw_scores(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> np
     :return: The raw prediction scores as a numpy array.
     :rtype: np.ndarray
     """
-    input_ = _image_preprocess(image, _MODEL_TO_SIZE[model_name]).astype(np.float32)
+    images, _ = normalize_multi_images(image)
+    input_ = np.concatenate([
+        _image_preprocess(item, _MODEL_TO_SIZE[model_name]).astype(np.float32)
+        for item in images
+    ], axis=0)
     output_, = _open_nsfw_model(model_name).run(['dense_3'], {'input_1': input_})
-    return output_[0]
+    return output_
 
 
-def nsfw_pred_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> Mapping[str, float]:
+def nsfw_pred_score(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME) -> Mapping[str, float]:
     """
     Computes the NSFW prediction scores for the input image.
 
@@ -163,11 +167,12 @@ def nsfw_pred_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -
         >>> nsfw_pred_score('nsfw/sexy/20.jpg')
         {'drawings': 0.0001731760276015848, 'hentai': 6.304211274255067e-05, 'neutral': 0.03286275267601013, 'porn': 0.010648751631379128, 'sexy': 0.9562522172927856}
     """
-    # noinspection PyTypeChecker
-    return dict(zip(_LABELS, _raw_scores(image, model_name).tolist()))
+    _, is_multi = normalize_multi_images(image)
+    results = [dict(zip(_LABELS, score_item.tolist())) for score_item in _raw_scores(image, model_name)]
+    return restore_multi_images_result(results, is_multi)
 
 
-def nsfw_pred(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> Tuple[str, float]:
+def nsfw_pred(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME) -> Tuple[str, float]:
     """
     Performs NSFW prediction on the input image.
 
@@ -227,6 +232,9 @@ def nsfw_pred(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> Tupl
         >>> nsfw_pred('nsfw/sexy/20.jpg')
         ('sexy', 0.9562522172927856)
     """
-    scores = _raw_scores(image, model_name)
-    maxid = np.argmax(scores)
-    return _LABELS[maxid], scores[maxid].item()
+    _, is_multi = normalize_multi_images(image)
+    results = []
+    for scores in _raw_scores(image, model_name):
+        maxid = np.argmax(scores)
+        results.append((_LABELS[maxid], scores[maxid].item()))
+    return restore_multi_images_result(results, is_multi)

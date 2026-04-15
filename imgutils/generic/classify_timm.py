@@ -24,7 +24,7 @@ import pandas as pd
 from hfutils.repository import hf_hub_repo_url
 from huggingface_hub import hf_hub_download
 
-from ..data import ImageTyping, load_image
+from ..data import MultiImagesTyping, ImageTyping, load_images, normalize_multi_images, restore_multi_images_result
 from ..preprocess import create_pillow_transforms
 from ..utils import open_onnx_model, vnames
 from ..utils import vreplace, ts_lru_cache
@@ -159,7 +159,7 @@ class ClassifyTIMMModel:
 
         return self._preprocess
 
-    def _raw_predict(self, image: ImageTyping, preprocessor: Literal['test', 'val'] = 'test'):
+    def _raw_predict(self, image: MultiImagesTyping, preprocessor: Literal['test', 'val'] = 'test'):
         """
         Perform raw prediction on an image.
 
@@ -174,7 +174,6 @@ class ClassifyTIMMModel:
         :rtype: dict
         :raises ValueError: If an invalid preprocessor type is specified
         """
-        image = load_image(image, force_background='white', mode='RGB')
         model = self._open_model()
 
         val_trans, test_trans = self._open_preprocess()
@@ -186,12 +185,13 @@ class ClassifyTIMMModel:
             raise ValueError(
                 f'Unknown processor, "test" or "val" expected but {preprocessor!r} found.')  # pragma: no cover
 
-        input_ = trans(image)[None, ...]
+        images = load_images(image, force_background='white', mode='RGB')
+        input_ = np.stack([trans(item) for item in images])
         output_names = [output.name for output in model.get_outputs()]
         output_values = model.run(output_names, {'input': input_})
-        return {name: value[0] for name, value in zip(output_names, output_values)}
+        return {name: value for name, value in zip(output_names, output_values)}
 
-    def predict(self, image: ImageTyping, preprocessor: Literal['test', 'val'] = 'test', fmt='scores-top5'):
+    def predict(self, image: MultiImagesTyping, preprocessor: Literal['test', 'val'] = 'test', fmt='scores-top5'):
         """
         Predict classification results for an image.
 
@@ -220,22 +220,29 @@ class ClassifyTIMMModel:
 
         For more details see documentation of :func:`classify_timm_predict`.
         """
+        _, is_multi = normalize_multi_images(image)
         df_tags = self._open_tags()
-        values = self._raw_predict(image, preprocessor=preprocessor)
-        prediction = values['prediction']
+        raw_values = self._raw_predict(image, preprocessor=preprocessor)
+        batch_size = raw_values['prediction'].shape[0]
+        results = []
+        for index in range(batch_size):
+            values = {name: value[index] for name, value in raw_values.items()}
+            prediction = values['prediction']
 
-        for vname in vnames(fmt, str_only=True):
-            matching = re.fullmatch(r'^scores(-top(?P<topk>\d+))?$', vname)
-            if matching:
-                topk = int(matching.group('topk')) if matching.group('topk') else None
-                order = np.argsort(-prediction)
-                if topk is not None:
-                    order = order[:topk]
-                pred = prediction[order].tolist()
-                labs = df_tags['name'][order].tolist()
-                values[vname] = dict(zip(labs, pred))
+            for vname in vnames(fmt, str_only=True):
+                matching = re.fullmatch(r'^scores(-top(?P<topk>\d+))?$', vname)
+                if matching:
+                    topk = int(matching.group('topk')) if matching.group('topk') else None
+                    order = np.argsort(-prediction)
+                    if topk is not None:
+                        order = order[:topk]
+                    pred = prediction[order].tolist()
+                    labs = df_tags['name'][order].tolist()
+                    values[vname] = dict(zip(labs, pred))
 
-        return vreplace(fmt, values)
+            results.append(vreplace(fmt, values))
+
+        return restore_multi_images_result(results, is_multi)
 
     def make_ui(self):
         """
@@ -328,7 +335,7 @@ def _open_models_for_repo_id(repo_id: str, hf_token: Optional[str] = None) -> Cl
     )
 
 
-def classify_timm_predict(image: ImageTyping, repo_id: str, preprocessor: Literal['test', 'val'] = 'test',
+def classify_timm_predict(image: MultiImagesTyping, repo_id: str, preprocessor: Literal['test', 'val'] = 'test',
                           fmt='scores-top5', hf_token: Optional[str] = None):
     """
     Perform image classification using a TIMM model from a Hugging Face repository.

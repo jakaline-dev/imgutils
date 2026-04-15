@@ -8,7 +8,7 @@ from hbutils.testing import vpip
 from huggingface_hub.utils import reset_sessions
 
 from imgutils.generic import classify_predict_score
-from imgutils.generic.classify import _open_models_for_repo_id, classify_predict_fmt
+from imgutils.generic.classify import ClassifyModel, _open_models_for_repo_id, classify_predict_fmt
 from test.testings import get_testfile
 
 
@@ -33,6 +33,33 @@ def clean_session():
 
 @pytest.mark.unittest
 class TestGenericClassify:
+    @staticmethod
+    def _fake_model():
+        class _FakeNode:
+            def __init__(self, name, shape=None):
+                self.name = name
+                self.shape = shape
+
+        class _FakeSession:
+            def get_inputs(self):
+                return [_FakeNode('input', [None, 3, 32, 32])]
+
+            def get_outputs(self):
+                return [_FakeNode('output')]
+
+            def run(self, output_names, inputs):
+                batch = inputs['input'].shape[0]
+                output = np.tile(np.array([[0.8, 0.15, 0.05]], dtype=np.float32), (batch, 1))
+                return [output]
+
+        model = ClassifyModel('dummy/repo')
+        model._models['dummy_model'] = _FakeSession()
+        model._labels['dummy_model'] = {
+            'default': np.array(['alpha', 'beta', 'gamma'])
+        }
+        model._preprocesses['dummy_model'] = None
+        return model
+
     def test_classify_predict_score(self):
         image = Image.open(get_testfile('png_640.png'))
         scores = classify_predict_score(
@@ -232,6 +259,26 @@ class TestGenericClassify:
         emb_sims = (emb_1 * emb_2).sum()
         assert emb_sims >= 0.99, 'Direction not match with expected embedding.'
         assert np.linalg.norm(results['embedding']) == pytest.approx(np.linalg.norm(expected_embedding))
+
+    def test_classify_predict_score_multiple(self):
+        image = Image.new('RGB', (32, 32), 'white')
+        model = self._fake_model()
+        single = model.predict_score(image, 'dummy_model', topk=2)
+        multiple = model.predict_score([image, image], 'dummy_model', topk=2)
+
+        assert len(multiple) == 2
+        assert multiple[0] == pytest.approx(single, abs=1e-6)
+        assert multiple[1] == pytest.approx(single, abs=1e-6)
+
+    def test_classify_predict_fmt_multiple(self):
+        image = Image.new('RGB', (32, 32), 'white')
+        model = self._fake_model()
+        single = model.predict_fmt(image, 'dummy_model', fmt='scores-top2')
+        multiple = model.predict_fmt([image, image], 'dummy_model', fmt='scores-top2')
+
+        assert len(multiple) == 2
+        assert multiple[0] == pytest.approx(single, abs=1e-6)
+        assert multiple[1] == pytest.approx(single, abs=1e-6)
 
     @patch("huggingface_hub.constants.HF_HUB_OFFLINE", True)
     @skipUnless(vpip('huggingface_hub') < '0.34', 'Has problem on huggingface 0.34+')

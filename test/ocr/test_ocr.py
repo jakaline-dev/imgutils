@@ -103,6 +103,15 @@ class TestOcr:
             ((332, 600, 671, 636), 0.798)
         ])
 
+    def test_detect_text_with_ocr_multiple(self, ocr_img_comic, ocr_img_anime_subtitle_pil):
+        single_1 = detect_text_with_ocr(ocr_img_comic)
+        single_2 = detect_text_with_ocr(ocr_img_anime_subtitle_pil)
+        multiple = detect_text_with_ocr([ocr_img_comic, ocr_img_anime_subtitle_pil])
+
+        assert len(multiple) == 2
+        assert multiple[0] == pytest.approx(single_1, abs=1e-3)
+        assert multiple[1] == pytest.approx(single_2, abs=1e-3)
+
     def test_list_det_models(self):
         lst = list_det_models()
         assert 'ch_PP-OCRv4_det' in lst
@@ -166,6 +175,15 @@ class TestOcr:
         assert '任务' in texts
         assert 'word_acc' in texts
         assert 'SVTR' in texts
+
+    def test_ocr_multiple(self, ocr_img_comic, ocr_img_plot):
+        single_1 = ocr(ocr_img_comic)
+        single_2 = ocr(ocr_img_plot)
+        multiple = ocr([ocr_img_comic, ocr_img_plot])
+
+        assert len(multiple) == 2
+        assert multiple[0] == pytest.approx(single_1, abs=1e-3)
+        assert multiple[1] == pytest.approx(single_2, abs=1e-3)
 
     def test_list_rec_models(self):
         lst = list_rec_models()

@@ -16,7 +16,7 @@ from PIL import Image
 from huggingface_hub import hf_hub_download
 
 from .overlap import drop_overlap_tags
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 
@@ -60,7 +60,7 @@ def _image_preprocess(image: Image.Image) -> np.ndarray:
     return data.reshape((1, 512, 512, 3))  # B x H x W x C
 
 
-def get_deepdanbooru_tags(image: ImageTyping, use_real_name: bool = False,
+def get_deepdanbooru_tags(image: MultiImagesTyping, use_real_name: bool = False,
                           general_threshold: float = 0.5, character_threshold: float = 0.5,
                           drop_overlap: bool = False):
     """
@@ -102,32 +102,34 @@ def get_deepdanbooru_tags(image: ImageTyping, use_real_name: bool = False,
         {}
     """
     session = _get_deepdanbooru_model()
-    _image_data = _image_preprocess(load_image(image, mode='RGB'))
+    images, is_multi = normalize_multi_images(image)
+    _image_data = np.concatenate([_image_preprocess(load_image(item, mode='RGB')) for item in images], axis=0)
 
     input_name = session.get_inputs()[0].name
     output_names = [output.name for output in session.get_outputs()]
     probs = session.run(output_names, {input_name: _image_data})[0]
 
     tag_names, tag_real_names, rating_indexes, general_indexes, character_indexes = _get_deepdanbooru_labels()
-    labels: List[Tuple[str, float]] = list(zip(
-        tag_real_names if use_real_name else tag_names,
-        probs[0].astype(float).tolist(),
-    ))
+    results = []
+    for prob_item in probs:
+        labels: List[Tuple[str, float]] = list(zip(
+            tag_real_names if use_real_name else tag_names,
+            prob_item.astype(float).tolist(),
+        ))
 
-    # First 4 labels are actually ratings: pick one with argmax
-    ratings_names = [labels[i] for i in rating_indexes]
-    rating = dict(ratings_names)
+        ratings_names = [labels[i] for i in rating_indexes]
+        rating = dict(ratings_names)
 
-    # Then we have general tags: pick anywhere prediction confidence > threshold
-    general_names = [labels[i] for i in general_indexes]
-    general_res = [x for x in general_names if x[1] > general_threshold]
-    general_res = dict(general_res)
-    if drop_overlap:
-        general_res = drop_overlap_tags(general_res)
+        general_names = [labels[i] for i in general_indexes]
+        general_res = [x for x in general_names if x[1] > general_threshold]
+        general_res = dict(general_res)
+        if drop_overlap:
+            general_res = drop_overlap_tags(general_res)
 
-    # Everything else is characters: pick anywhere prediction confidence > threshold
-    character_names = [labels[i] for i in character_indexes]
-    character_res = [x for x in character_names if x[1] > character_threshold]
-    character_res = dict(character_res)
+        character_names = [labels[i] for i in character_indexes]
+        character_res = [x for x in character_names if x[1] > character_threshold]
+        character_res = dict(character_res)
 
-    return rating, general_res, character_res
+        results.append((rating, general_res, character_res))
+
+    return restore_multi_images_result(results, is_multi)

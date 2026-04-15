@@ -25,7 +25,10 @@ from hfutils.utils import hf_fs_path, hf_normpath
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, OfflineModeIsEnabled
 
-from ..data import rgb_encode, ImageTyping, load_image
+from ..data import (
+    rgb_encode, ImageTyping, MultiImagesTyping, load_image, load_images,
+    normalize_multi_images, restore_multi_images_result,
+)
 from ..preprocess import create_pillow_transforms
 from ..utils import open_onnx_model, ts_lru_cache, vnames, vreplace
 
@@ -297,7 +300,7 @@ class ClassifyModel:
 
             return self._preprocesses[model_name]
 
-    def _raw_predict(self, image: ImageTyping, model_name: str):
+    def _raw_predict(self, image: MultiImagesTyping, model_name: str):
         """
         Generate raw model predictions for an input image.
 
@@ -317,30 +320,35 @@ class ClassifyModel:
 
         :raises RuntimeError: If model input shape is incompatible
         """
-        image = load_image(image, force_background='white', mode='RGB')
         model = self._open_model(model_name)
         batch, channels, height, width = model.get_inputs()[0].shape
         if channels != 3:
             raise RuntimeError(f'Model {model_name!r} required {[batch, channels, height, width]!r}, '
                                f'channels not 3.')  # pragma: no cover
 
-        if self._fn_preprocess:
-            image = self._fn_preprocess(image)
-
+        images = load_images(image, force_background='white', mode='RGB')
         preprocess = self._open_preprocess(model_name=model_name)
-        if preprocess:
-            input_ = preprocess(image)[None, ...]
-        else:
-            if isinstance(height, int) and isinstance(width, int):
-                input_ = _img_encode(image, size=(width, height))[None, ...]
+        inputs = []
+        for image_item in images:
+            if self._fn_preprocess:
+                image_item = self._fn_preprocess(image_item)
+
+            if preprocess:
+                input_ = preprocess(image_item)
             else:
-                input_ = _img_encode(image)[None, ...]
+                if isinstance(height, int) and isinstance(width, int):
+                    input_ = _img_encode(image_item, size=(width, height))
+                else:
+                    input_ = _img_encode(image_item)
+            inputs.append(input_)
+
+        input_ = np.stack(inputs)
         onnx_model = self._open_model(model_name)
         output_names = [output.name for output in onnx_model.get_outputs()]
         output_values = self._open_model(model_name).run(output_names, {'input': input_})
         return {name: value for name, value in zip(output_names, output_values)}
 
-    def predict_score(self, image: ImageTyping, model_name: str,
+    def predict_score(self, image: MultiImagesTyping, model_name: str,
                       label_group: str = 'default', topk: Optional[int] = 20) -> Dict[str, float]:
         """
         Predict the scores for each class using the specified model.
@@ -362,16 +370,21 @@ class ClassifyModel:
         :raises ValueError: If the model name is invalid.
         :raises RuntimeError: If there's an error during prediction.
         """
+        _, is_multi = normalize_multi_images(image)
         output = self._raw_predict(image, model_name)['output']
         labels = self._open_label(model_name)[label_group]
-        scores = output[0]
-        return _labels_scores_to_topk(
-            labels=labels,
-            scores=scores,
-            topk=topk,
-        )
+        results = [
+            _labels_scores_to_topk(
+                labels=labels,
+                scores=scores,
+                topk=topk,
+            )
+            for scores in output
+        ]
+        return restore_multi_images_result(results, is_multi)
 
-    def predict(self, image: ImageTyping, model_name: str, label_group: str = 'default') -> Tuple[str, float]:
+    def predict(self, image: MultiImagesTyping, model_name: str,
+                label_group: str = 'default') -> Tuple[str, float]:
         """
         Predict the class with the highest score for the given image.
 
@@ -390,11 +403,16 @@ class ClassifyModel:
         :raises ValueError: If the model name is invalid.
         :raises RuntimeError: If there's an error during prediction.
         """
-        output = self._raw_predict(image, model_name)['output'][0]
-        max_id = np.argmax(output)
-        return self._open_label(model_name)[label_group][max_id], output[max_id].item()
+        _, is_multi = normalize_multi_images(image)
+        outputs = self._raw_predict(image, model_name)['output']
+        labels = self._open_label(model_name)[label_group]
+        results = []
+        for output in outputs:
+            max_id = np.argmax(output)
+            results.append((labels[max_id], output[max_id].item()))
+        return restore_multi_images_result(results, is_multi)
 
-    def predict_fmt(self, image: ImageTyping, model_name: str, fmt='scores-top5'):
+    def predict_fmt(self, image: MultiImagesTyping, model_name: str, fmt='scores-top5'):
         """
         Predict the scores for each class with given format specification using the specified model.
 
@@ -420,28 +438,35 @@ class ClassifyModel:
             - ``scores-<label_group>``, prediction scores of all classes with label group ``<label_group>``, e.g. ``scores-descriptions`` means all scores with ``descriptions`` label group.
             - ``scores-topK-<label_group>``, prediction scores of top-K classes with label group ``<label_group>``.
         """
-        d_data = {name: value[0] for name, value in self._raw_predict(image, model_name).items()}
-        scores = d_data['output']
+        _, is_multi = normalize_multi_images(image)
+        raw_values = self._raw_predict(image, model_name)
         d_labels = self._open_label(model_name)
-        vname_to_spair = {}
-        d_scores = {}
-        for vname in vnames(fmt, str_only=True):
-            matching = re.fullmatch(r'^scores(-top(?P<topk>\d+))?(-(?P<label_group>[a-zA-Z\d_]+))?$', vname)
-            if matching:
-                topk = int(matching.group('topk')) if matching.group('topk') else None
-                label_group = matching.group('label_group') if matching.group('label_group') else 'default'
-                vname_to_spair[vname] = (topk, label_group)
-                if (topk, label_group) not in d_scores:
-                    d_scores[(topk, label_group)] = _labels_scores_to_topk(
-                        labels=d_labels[label_group],
-                        scores=scores,
-                        topk=topk,
-                    )
+        results = []
+        batch_size = next(iter(raw_values.values())).shape[0]
+        for index in range(batch_size):
+            d_data = {name: value[index] for name, value in raw_values.items()}
+            scores = d_data['output']
+            vname_to_spair = {}
+            d_scores = {}
+            for vname in vnames(fmt, str_only=True):
+                matching = re.fullmatch(r'^scores(-top(?P<topk>\d+))?(-(?P<label_group>[a-zA-Z\d_]+))?$', vname)
+                if matching:
+                    topk = int(matching.group('topk')) if matching.group('topk') else None
+                    label_group = matching.group('label_group') if matching.group('label_group') else 'default'
+                    vname_to_spair[vname] = (topk, label_group)
+                    if (topk, label_group) not in d_scores:
+                        d_scores[(topk, label_group)] = _labels_scores_to_topk(
+                            labels=d_labels[label_group],
+                            scores=scores,
+                            topk=topk,
+                        )
 
-        return vreplace(fmt, mapping={
-            **d_data,
-            **{vname: d_scores[vpair] for vname, vpair in vname_to_spair.items()},
-        })
+            results.append(vreplace(fmt, mapping={
+                **d_data,
+                **{vname: d_scores[vpair] for vname, vpair in vname_to_spair.items()},
+            }))
+
+        return restore_multi_images_result(results, is_multi)
 
     def clear(self):
         """
@@ -598,7 +623,7 @@ def _open_models_for_repo_id(repo_id: str, hf_token: Optional[str] = None) -> Cl
     return ClassifyModel(repo_id, hf_token=hf_token)
 
 
-def classify_predict_score(image: ImageTyping, repo_id: str, model_name: str,
+def classify_predict_score(image: MultiImagesTyping, repo_id: str, model_name: str,
                            label_group: str = 'default', topk: Optional[int] = 20,
                            hf_token: Optional[str] = None) -> Dict[str, float]:
     """
@@ -633,7 +658,7 @@ def classify_predict_score(image: ImageTyping, repo_id: str, model_name: str,
     )
 
 
-def classify_predict(image: ImageTyping, repo_id: str, model_name: str, label_group: str = 'default',
+def classify_predict(image: MultiImagesTyping, repo_id: str, model_name: str, label_group: str = 'default',
                      hf_token: Optional[str] = None) -> Tuple[str, float]:
     """
     Predict the class with the highest score using the specified model and repository.
@@ -664,7 +689,7 @@ def classify_predict(image: ImageTyping, repo_id: str, model_name: str, label_gr
     )
 
 
-def classify_predict_fmt(image: ImageTyping, repo_id: str, model_name: str, fmt='scores-top5',
+def classify_predict_fmt(image: MultiImagesTyping, repo_id: str, model_name: str, fmt='scores-top5',
                          hf_token: Optional[str] = None):
     """
     Predict the scores for each class with given format specification using the specified model.

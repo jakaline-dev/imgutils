@@ -17,7 +17,7 @@ import numpy as np
 from PIL import Image
 from huggingface_hub import hf_hub_download
 
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 __all__ = [
@@ -99,7 +99,7 @@ def _pred(image, model_name=DEFAULT_MODEL, max_batch_size=8):
     return scores
 
 
-def safe_check_score(image: ImageTyping, model_name: str = DEFAULT_MODEL, max_batch_size: int = 8) \
+def safe_check_score(image: MultiImagesTyping, model_name: str = DEFAULT_MODEL, max_batch_size: int = 8) \
         -> Mapping[str, float]:
     """
     Check the safety score of an image.
@@ -113,12 +113,16 @@ def safe_check_score(image: ImageTyping, model_name: str = DEFAULT_MODEL, max_ba
     :return: A mapping of safety labels and their corresponding scores.
     :rtype: Mapping[str, float]
     """
-    image = load_image(image)
-    _pred_result = _pred(image, model_name, max_batch_size)
-    return dict(zip(['polluted', 'safe'], map(lambda x: x.item(), _pred_result)))
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item)
+        _pred_result = _pred(image_item, model_name, max_batch_size)
+        results.append(dict(zip(['polluted', 'safe'], map(lambda x: x.item(), _pred_result))))
+    return restore_multi_images_result(results, is_multi)
 
 
-def safe_check(image: ImageTyping, model_name: str = DEFAULT_MODEL, max_batch_size: int = 8) \
+def safe_check(image: MultiImagesTyping, model_name: str = DEFAULT_MODEL, max_batch_size: int = 8) \
         -> Tuple[str, float]:
     """
     Check the safety label and score of an image.
@@ -132,7 +136,11 @@ def safe_check(image: ImageTyping, model_name: str = DEFAULT_MODEL, max_batch_si
     :return: A tuple containing the safety label and score.
     :rtype: Tuple[str, float]
     """
-    image = load_image(image)
-    _pred_result = _pred(image, model_name, max_batch_size)
-    id_ = _pred_result.argmax().item()
-    return _LABELS[id_], _pred_result[id_].item()
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item)
+        _pred_result = _pred(image_item, model_name, max_batch_size)
+        id_ = _pred_result.argmax().item()
+        results.append((_LABELS[id_], _pred_result[id_].item()))
+    return restore_multi_images_result(results, is_multi)

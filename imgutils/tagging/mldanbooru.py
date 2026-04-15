@@ -11,7 +11,7 @@ from PIL import Image
 from huggingface_hub import hf_hub_download
 
 from .overlap import drop_overlap_tags
-from ..data import load_image, ImageTyping
+from ..data import ImageTyping, MultiImagesTyping, load_images, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 
@@ -56,7 +56,7 @@ def _get_mldanbooru_labels(use_real_name: bool = False) -> Tuple[List[str], List
     return df["name"].tolist() if not use_real_name else df['real_name'].tolist()
 
 
-def get_mldanbooru_tags(image: ImageTyping, use_real_name: bool = False,
+def get_mldanbooru_tags(image: MultiImagesTyping, use_real_name: bool = False,
                         threshold: float = 0.7, size: int = 448, keep_ratio: bool = False,
                         drop_overlap: bool = False):
     """
@@ -95,18 +95,24 @@ def get_mldanbooru_tags(image: ImageTyping, use_real_name: bool = False,
         :func:`imgutils.tagging.deepdanbooru.get_deepdanbooru_tags` or
         :func:`imgutils.tagging.wd14.get_wd14_tags`.
     """
-    image = load_image(image, mode='RGB')
-    real_input = _to_tensor(_resize_align(image, size, keep_ratio))
-    real_input = real_input.reshape(1, *real_input.shape)
+    _, is_multi = normalize_multi_images(image)
+    images = load_images(image, mode='RGB')
+    real_input = np.stack([
+        _to_tensor(_resize_align(item, size, keep_ratio))
+        for item in images
+    ])
 
     model = _open_mldanbooru_model()
     native_output, = model.run(['output'], {'input': real_input})
 
-    output = (1 / (1 + np.exp(-native_output))).reshape(-1)
+    output = 1 / (1 + np.exp(-native_output))
     tags = _get_mldanbooru_labels(use_real_name)
-    pairs = sorted([(tags[i], ratio) for i, ratio in enumerate(output)], key=lambda x: (-x[1], x[0]))
+    results = []
+    for output_item in output:
+        pairs = sorted([(tags[i], ratio) for i, ratio in enumerate(output_item.reshape(-1))], key=lambda x: (-x[1], x[0]))
 
-    general_tags = {tag: float(ratio) for tag, ratio in pairs if ratio >= threshold}
-    if drop_overlap:
-        general_tags = drop_overlap_tags(general_tags)
-    return general_tags
+        general_tags = {tag: float(ratio) for tag, ratio in pairs if ratio >= threshold}
+        if drop_overlap:
+            general_tags = drop_overlap_tags(general_tags)
+        results.append(general_tags)
+    return restore_multi_images_result(results, is_multi)

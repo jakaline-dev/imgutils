@@ -81,7 +81,7 @@ from PIL import Image
 from hbutils.testing.requires.version import VersionInfo
 from huggingface_hub import hf_hub_download
 
-from imgutils.data import ImageTyping
+from imgutils.data import ImageTyping, MultiImagesTyping, normalize_multi_images, restore_multi_images_result
 from imgutils.utils import open_onnx_model, ts_lru_cache
 from ..data import load_image
 
@@ -216,7 +216,7 @@ _LABELS = [
 ]
 
 
-def detect_with_nudenet(image: ImageTyping, topk: int = 100,
+def detect_with_nudenet(image: MultiImagesTyping, topk: int = 100,
                         iou_threshold: float = 0.45, score_threshold: float = 0.25) \
         -> List[Tuple[Tuple[int, int, int, int], str, float]]:
     """
@@ -233,8 +233,12 @@ def detect_with_nudenet(image: ImageTyping, topk: int = 100,
              - A confidence score
     """
     _check_compatibility()
-    input_, global_ratio = _nn_preprocessing(image, model_size=320)
+    images, is_multi = normalize_multi_images(image)
     config = _make_np_config(topk, iou_threshold, score_threshold)
-    output0, = _open_nudenet_yolo().run(['output0'], {'images': input_})
-    selected, = _open_nudenet_nms().run(['selected'], {'detection': output0, 'config': config})
-    return _nn_postprocess(selected[0], global_ratio=global_ratio)
+    results = []
+    for image_item in images:
+      input_, global_ratio = _nn_preprocessing(image_item, model_size=320)
+      output0, = _open_nudenet_yolo().run(['output0'], {'images': input_})
+      selected, = _open_nudenet_nms().run(['selected'], {'detection': output0, 'config': config})
+      results.append(_nn_postprocess(selected[0], global_ratio=global_ratio))
+    return restore_multi_images_result(results, is_multi)

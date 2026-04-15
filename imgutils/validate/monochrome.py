@@ -15,7 +15,7 @@ Overview:
 
     The models are hosted on `huggingface - deepghs/monochrome_detect <https://huggingface.co/deepghs/monochrome_detect>`_.
 """
-from ..data import ImageTyping
+from ..data import ImageTyping, MultiImagesTyping, normalize_multi_images
 from ..generic import classify_predict_score, classify_predict
 
 __all__ = [
@@ -27,7 +27,7 @@ _DEFAULT_MODEL_NAME = 'mobilenetv3_large_100_dist_safe2'
 _REPO_ID = 'deepghs/monochrome_detect'
 
 
-def get_monochrome_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> float:
+def get_monochrome_score(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME) -> float:
     """
     Overview:
         Get monochrome score of the given image.
@@ -65,10 +65,15 @@ def get_monochrome_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NA
         >>> get_monochrome_score('colored/12.jpg')
         0.0315730981528759
     """
-    return classify_predict_score(image, _REPO_ID, model_name)['monochrome']
+    _, is_multi = normalize_multi_images(image)
+    scores = classify_predict_score(image, _REPO_ID, model_name)
+    if is_multi:
+        return [item['monochrome'] for item in scores]
+    else:
+        return scores['monochrome']
 
 
-def is_monochrome(image: ImageTyping, threshold: float = 0.5,
+def is_monochrome(image: MultiImagesTyping, threshold: float = 0.5,
                   model_name: str = _DEFAULT_MODEL_NAME) -> bool:
     """
     Overview:
@@ -109,5 +114,10 @@ def is_monochrome(image: ImageTyping, threshold: float = 0.5,
         >>> is_monochrome('colored/12.jpg')
         False
     """
-    type_, _ = classify_predict(image, _REPO_ID, model_name)
-    return type_ == 'monochrome'
+    _, is_multi = normalize_multi_images(image)
+    predictions = classify_predict(image, _REPO_ID, model_name)
+    if is_multi:
+        return [type_ == 'monochrome' for type_, _ in predictions]
+    else:
+        type_, _ = predictions
+        return type_ == 'monochrome'

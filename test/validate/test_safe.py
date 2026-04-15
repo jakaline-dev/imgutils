@@ -35,3 +35,20 @@ class TestValidateSafe:
         image_file = get_testfile('safe_check', image)
         scores = safe_check_score(image_file)
         assert scores[label] > 0.5
+
+    def test_safe_check_multiple(self):
+        files = [get_testfile('safe_check', image) for image, _ in _EXAMPLE_FILES[:2]]
+        labels = [label for _, label in _EXAMPLE_FILES[:2]]
+
+        results = safe_check(files)
+        assert len(results) == len(files)
+        assert [tag for tag, _ in results] == labels
+
+    def test_safe_check_score_multiple(self):
+        files = [get_testfile('safe_check', image) for image, _ in _EXAMPLE_FILES[:2]]
+        labels = [label for _, label in _EXAMPLE_FILES[:2]]
+
+        results = safe_check_score(files)
+        assert len(results) == len(files)
+        for score_item, label in zip(results, labels):
+            assert score_item[label] > 0.5

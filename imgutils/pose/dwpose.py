@@ -21,7 +21,7 @@ import numpy as np
 from huggingface_hub import hf_hub_download
 
 from .format import OP18KeyPointSet
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..detect import detect_person
 from ..utils import open_onnx_model, ts_lru_cache
 
@@ -390,7 +390,36 @@ def _open_dwpose_model():
     ))
 
 
-def dwpose_estimate(image: ImageTyping, auto_detect: bool = True,
+def _dwpose_estimate_single(image: ImageTyping, auto_detect: bool = True,
+                            out_bboxes=None, person_detect_cfgs=None) -> List[OP18KeyPointSet]:
+    session = _open_dwpose_model()
+    h, w = session.get_inputs()[0].shape[-2:]
+    model_input_size = (w, h)
+
+    image = load_image(image, mode='RGB')
+    np_image = np.array(image)
+    if auto_detect:
+        if out_bboxes is not None:
+            warnings.warn('Out bboxes provided, auto detection will be disabled.')
+        else:
+            out_bboxes = [
+                (x0, y0, x1, y1) for (x0, y0, x1, y1), _, _ in
+                detect_person(image, **(person_detect_cfgs or {}))
+            ]
+    elif out_bboxes is None:
+        out_bboxes = [(0, 0, image.width, image.height)]
+
+    resized_img, center, scale = _dwpose_preprocess(np_image, out_bboxes, model_input_size)
+    outputs = _dwpose_inference(session, resized_img)
+    keypoints, scores = _dwpose_postprocess(outputs, model_input_size, center, scale)
+    if keypoints.shape[0] > 0:
+        keypoints, scores = _dwpose_reorder_body_points(keypoints, scores)
+        return _split_data(keypoints, scores)
+    else:
+        return []
+
+
+def dwpose_estimate(image: MultiImagesTyping, auto_detect: bool = True,
                     out_bboxes=None, person_detect_cfgs=None) -> List[OP18KeyPointSet]:
     """
     Performs inference on the RTMPose model and returns keypoints and scores.
@@ -424,28 +453,9 @@ def dwpose_estimate(image: ImageTyping, auto_detect: bool = True,
         .. note::
             Function :func:`imgutils.pose.visual.op18_visualize` can be used to visualize this result.
     """
-    session = _open_dwpose_model()
-    h, w = session.get_inputs()[0].shape[-2:]
-    model_input_size = (w, h)
-
-    image = load_image(image, mode='RGB')
-    np_image = np.array(image)
-    if auto_detect:
-        if out_bboxes is not None:
-            warnings.warn('Out bboxes provided, auto detection will be disabled.')
-        else:
-            out_bboxes = [
-                (x0, y0, x1, y1) for (x0, y0, x1, y1), _, _ in
-                detect_person(image, **(person_detect_cfgs or {}))
-            ]
-    elif out_bboxes is None:
-        out_bboxes = [(0, 0, image.width, image.height)]
-
-    resized_img, center, scale = _dwpose_preprocess(np_image, out_bboxes, model_input_size)
-    outputs = _dwpose_inference(session, resized_img)
-    keypoints, scores = _dwpose_postprocess(outputs, model_input_size, center, scale)
-    if keypoints.shape[0] > 0:
-        keypoints, scores = _dwpose_reorder_body_points(keypoints, scores)
-        return _split_data(keypoints, scores)
-    else:
-        return []
+    images, is_multi = normalize_multi_images(image)
+    results = [
+        _dwpose_estimate_single(item, auto_detect=auto_detect, out_bboxes=out_bboxes, person_detect_cfgs=person_detect_cfgs)
+        for item in images
+    ]
+    return restore_multi_images_result(results, is_multi)

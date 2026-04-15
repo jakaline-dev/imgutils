@@ -40,7 +40,10 @@ from hbutils.design import SingletonMark
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 
-from imgutils.data import ImageTyping, load_image
+from imgutils.data import (
+    ImageTyping, MultiImagesTyping, load_images,
+    normalize_multi_images, restore_multi_images_result,
+)
 from imgutils.preprocess import create_pillow_transforms
 from imgutils.utils import open_onnx_model, ts_lru_cache, vreplace
 
@@ -180,7 +183,7 @@ def _open_default_category_thresholds(model_name: str) -> Tuple[Dict[int, float]
     return _default_category_thresholds, _category_names
 
 
-def _raw_predict(image: ImageTyping, model_name: str):
+def _raw_predict(image: MultiImagesTyping, model_name: str):
     """
     Make a raw prediction with the PixAI tagger model.
 
@@ -200,16 +203,16 @@ def _raw_predict(image: ImageTyping, model_name: str):
         >>> raw_output = _raw_predict('anime_image.jpg', 'v0.9')
         >>> print(raw_output.keys())  # dict_keys(['prediction', 'embedding', 'logits'])
     """
-    image = load_image(image, force_background='white', mode='RGB')
     model = _open_onnx_model(model_name=model_name)
     trans = _open_preprocess(model_name=model_name)
-    input_ = trans(image)[None, ...]
+    images = load_images(image, force_background='white', mode='RGB')
+    input_ = np.stack([trans(item) for item in images])
     output_names = [output.name for output in model.get_outputs()]
     output_values = model.run(output_names, {'input': input_})
-    return {name: value[0] for name, value in zip(output_names, output_values)}
+    return {name: value for name, value in zip(output_names, output_values)}
 
 
-def get_pixai_tags(image: ImageTyping, model_name: str = 'v0.9',
+def get_pixai_tags(image: MultiImagesTyping, model_name: str = 'v0.9',
                    thresholds: Union[float, Dict[Any, float]] = None, fmt=FMT_UNSET):
     """
     Extract tags from an image using PixAI tagger models.
@@ -312,52 +315,59 @@ def get_pixai_tags(image: ImageTyping, model_name: str = 'v0.9',
         >>> character
         {'hu_tao_(genshin_impact)': 0.9997367858886719, 'boo_tao_(genshin_impact)': 0.999537467956543}
     """
+    _, is_multi = normalize_multi_images(image)
     df_tags, d_ips = _open_tags(model_name=model_name)
-    values = _raw_predict(image, model_name=model_name)
-    prediction = values['prediction']
-    tags = {}
+    raw_values = _raw_predict(image, model_name=model_name)
 
     default_category_thresholds, category_names = _open_default_category_thresholds(model_name=model_name)
     if fmt is FMT_UNSET:
         fmt = tuple(category_names[category] for category in sorted(set(df_tags['category'].tolist())))
 
-    for category in sorted(set(df_tags['category'].tolist())):
-        mask = df_tags['category'] == category
-        tag_names = df_tags['name'][mask]
-        category_pred = prediction[mask]
+    results = []
+    batch_size = raw_values['prediction'].shape[0]
+    for index in range(batch_size):
+        values = {name: value[index] for name, value in raw_values.items()}
+        prediction = values['prediction']
+        tags = {}
 
-        if isinstance(thresholds, float):
-            category_threshold = thresholds
-        elif isinstance(thresholds, dict) and \
-                (category in thresholds or category_names[category] in thresholds):
-            if category in thresholds:
-                category_threshold = thresholds[category]
-            elif category_names[category] in thresholds:
-                category_threshold = thresholds[category_names[category]]
+        for category in sorted(set(df_tags['category'].tolist())):
+            mask = df_tags['category'] == category
+            tag_names = df_tags['name'][mask]
+            category_pred = prediction[mask]
+
+            if isinstance(thresholds, float):
+                category_threshold = thresholds
+            elif isinstance(thresholds, dict) and \
+                    (category in thresholds or category_names[category] in thresholds):
+                if category in thresholds:
+                    category_threshold = thresholds[category]
+                elif category_names[category] in thresholds:
+                    category_threshold = thresholds[category_names[category]]
+                else:
+                    assert False, 'Should not reach this line'  # pragma: no cover
             else:
-                assert False, 'Should not reach this line'  # pragma: no cover
-        else:
-            if category in default_category_thresholds:
-                category_threshold = default_category_thresholds[category]
-            else:
-                category_threshold = 0.4
+                if category in default_category_thresholds:
+                    category_threshold = default_category_thresholds[category]
+                else:
+                    category_threshold = 0.4
 
-        mask = category_pred >= category_threshold
-        tag_names = tag_names[mask].tolist()
-        category_pred = category_pred[mask].tolist()
-        cate_tags = dict(sorted(zip(tag_names, category_pred), key=lambda x: (-x[1], x[0])))
-        values[category_names[category]] = cate_tags
-        tags.update(cate_tags)
+            mask = category_pred >= category_threshold
+            tag_names = tag_names[mask].tolist()
+            category_pred = category_pred[mask].tolist()
+            cate_tags = dict(sorted(zip(tag_names, category_pred), key=lambda x: (-x[1], x[0])))
+            values[category_names[category]] = cate_tags
+            tags.update(cate_tags)
 
-    values['tag'] = tags
-    if 'ips' in df_tags.columns:
-        ips_mapping, ips_counts = {}, defaultdict(lambda: 0)
-        for tag, _ in tags.items():
-            if tag in d_ips:
-                ips_mapping[tag] = d_ips[tag]
-                for ip_name in d_ips[tag]:
-                    ips_counts[ip_name] += 1
-        values['ips_mapping'] = ips_mapping
-        values['ips_count'] = dict(ips_counts)
-        values['ips'] = [x for x, _ in sorted(ips_counts.items(), key=lambda x: (-x[1], x[0]))]
-    return vreplace(fmt, values)
+        values['tag'] = tags
+        if 'ips' in df_tags.columns:
+            ips_mapping, ips_counts = {}, defaultdict(lambda: 0)
+            for tag, _ in tags.items():
+                if tag in d_ips:
+                    ips_mapping[tag] = d_ips[tag]
+                    for ip_name in d_ips[tag]:
+                        ips_counts[ip_name] += 1
+            values['ips_mapping'] = ips_mapping
+            values['ips_count'] = dict(ips_counts)
+            values['ips'] = [x for x, _ in sorted(ips_counts.items(), key=lambda x: (-x[1], x[0]))]
+        results.append(vreplace(fmt, values))
+    return restore_multi_images_result(results, is_multi)

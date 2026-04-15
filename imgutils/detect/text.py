@@ -31,7 +31,7 @@ from deprecation import deprecated
 from huggingface_hub import hf_hub_download
 
 from ..config.meta import __VERSION__
-from ..data import ImageTyping, load_image
+from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
 
 _DEFAULT_MODEL = 'dbnetpp_resnet50_fpnc_1200e_icdar2015'
@@ -119,7 +119,7 @@ def _get_bounding_box_of_text(image: ImageTyping, model: str, threshold: float) 
 
 @deprecated(deprecated_in="0.2.10", current_version=__VERSION__,
             details="Use the new function :func:`imgutils.ocr.detect_text_with_ocr` instead")
-def detect_text(image: ImageTyping, model: str = _DEFAULT_MODEL, threshold: float = 0.05,
+def detect_text(image: MultiImagesTyping, model: str = _DEFAULT_MODEL, threshold: float = 0.05,
                 max_area_size: Optional[int] = 640):
     """
     Detect text regions in the given image using the specified model and threshold.
@@ -141,18 +141,21 @@ def detect_text(image: ImageTyping, model: str = _DEFAULT_MODEL, threshold: floa
         This function is deprecated, and it will be removed from imgutils in the future.
         Please migrate to :func:`imgutils.ocr.detect_text_with_ocr` as soon as possible.
     """
-    image = load_image(image, mode='RGB')
-    if max_area_size is not None and image.width * image.height >= max_area_size ** 2:
-        r = ((image.width * image.height) / (max_area_size ** 2)) ** 0.5
-        new_width, new_height = int(image.width / r), int(image.height / r)
-        image = image.resize((new_width, new_height))
-    else:
-        r = 1.0
+    images, is_multi = normalize_multi_images(image)
+    results = []
+    for image_item in images:
+        image_item = load_image(image_item, mode='RGB')
+        if max_area_size is not None and image_item.width * image_item.height >= max_area_size ** 2:
+            r = ((image_item.width * image_item.height) / (max_area_size ** 2)) ** 0.5
+            new_width, new_height = int(image_item.width / r), int(image_item.height / r)
+            image_item = image_item.resize((new_width, new_height))
+        else:
+            r = 1.0
 
-    bboxes = []
-    for (x0, y0, x1, y1), score in _get_bounding_box_of_text(image, model, threshold):
-        x0, y0, x1, y1 = int(x0 * r), int(y0 * r), int(x1 * r), int(y1 * r)
-        bboxes.append(((x0, y0, x1, y1), 'text', score))
+        bboxes = []
+        for (x0, y0, x1, y1), score in _get_bounding_box_of_text(image_item, model, threshold):
+            x0, y0, x1, y1 = int(x0 * r), int(y0 * r), int(x1 * r), int(y1 * r)
+            bboxes.append(((x0, y0, x1, y1), 'text', score))
 
-    bboxes = sorted(bboxes, key=lambda x: x[2], reverse=True)
-    return bboxes
+        results.append(sorted(bboxes, key=lambda x: x[2], reverse=True))
+    return restore_multi_images_result(results, is_multi)

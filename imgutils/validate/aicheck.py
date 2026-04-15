@@ -15,7 +15,7 @@ Overview:
     The models are hosted on
     `huggingface - deepghs/anime_ai_check <https://huggingface.co/deepghs/anime_ai_check>`_.
 """
-from ..data import ImageTyping
+from ..data import ImageTyping, MultiImagesTyping, normalize_multi_images, restore_multi_images_result
 from ..generic import classify_predict, classify_predict_score
 
 __all__ = [
@@ -27,7 +27,7 @@ _DEFAULT_MODEL_NAME = 'mobilenetv3_sce_dist'
 _REPO_ID = 'deepghs/anime_ai_check'
 
 
-def get_ai_created_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME) -> float:
+def get_ai_created_score(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME) -> float:
     """
     Overview:
         Predict if the given image is created by AI (mainly by stable diffusion), given a score.
@@ -66,10 +66,15 @@ def get_ai_created_score(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NA
         >>> get_ai_created_score('aicheck/human/12.jpg')
         0.001168627175502479
     """
-    return classify_predict_score(image, _REPO_ID, model_name)['ai']
+    _, is_multi = normalize_multi_images(image)
+    scores = classify_predict_score(image, _REPO_ID, model_name)
+    if is_multi:
+        return [item['ai'] for item in scores]
+    else:
+        return scores['ai']
 
 
-def is_ai_created(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME, threshold: float = 0.5) -> bool:
+def is_ai_created(image: MultiImagesTyping, model_name: str = _DEFAULT_MODEL_NAME, threshold: float = 0.5) -> bool:
     """
     Overview:
         Predict if the given image is created by AI (mainly by stable diffusion).
@@ -110,5 +115,10 @@ def is_ai_created(image: ImageTyping, model_name: str = _DEFAULT_MODEL_NAME, thr
         >>> is_ai_created('aicheck/human/12.jpg')
         False
     """
-    type_, _ = classify_predict(image, _REPO_ID, model_name)
-    return type_ == 'ai'
+    _, is_multi = normalize_multi_images(image)
+    predictions = classify_predict(image, _REPO_ID, model_name)
+    if is_multi:
+        return [type_ == 'ai' for type_, _ in predictions]
+    else:
+        type_, _ = predictions
+        return type_ == 'ai'
