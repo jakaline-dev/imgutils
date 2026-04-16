@@ -167,6 +167,11 @@ def load_image(image: ImageTyping, mode=None, force_background: Optional[str] = 
     else:
         raise TypeError(f'Unknown image type - {image!r}.')
 
+    # Palette images with bytes transparency must be converted to RGBA first to avoid
+    # "Palette images with Transparency expressed in bytes should be converted to RGBA images"
+    if image.mode == 'P' and isinstance(image.info.get('transparency'), bytes):
+        image = image.convert('RGBA')
+
     if has_alpha_channel(image) and force_background is not None:
         image = add_background_for_rgba(image, force_background)
 

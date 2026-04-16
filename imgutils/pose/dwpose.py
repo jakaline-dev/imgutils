@@ -18,7 +18,7 @@ from typing import Tuple, List
 
 import cv2
 import numpy as np
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from .format import OP18KeyPointSet
 from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result

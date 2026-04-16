@@ -79,7 +79,7 @@ from typing import Tuple, List
 import numpy as np
 from PIL import Image
 from hbutils.testing.requires.version import VersionInfo
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from imgutils.data import ImageTyping, MultiImagesTyping, normalize_multi_images, restore_multi_images_result
 from imgutils.utils import open_onnx_model, ts_lru_cache

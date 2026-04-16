@@ -4,8 +4,8 @@ Overview:
 """
 
 import cv2
-import huggingface_hub
 import numpy as np
+from ..utils.hf import hf_hub_download as _hf_hub_download
 
 from ..data import (
     ImageTyping, MultiImagesTyping, load_image, istack,
@@ -17,7 +17,7 @@ from ..utils.onnxruntime import open_onnx_model
 
 @ts_lru_cache()
 def _get_model():
-    return open_onnx_model(huggingface_hub.hf_hub_download("skytnt/anime-seg", "isnetis.onnx"))
+    return open_onnx_model(_hf_hub_download("skytnt/anime-seg", "isnetis.onnx"))
 
 
 def _get_isnetis_mask_single(image: ImageTyping, scale: int = 1024):

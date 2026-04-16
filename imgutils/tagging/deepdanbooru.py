@@ -13,7 +13,7 @@ from typing import Tuple, List
 import numpy as np
 import pandas as pd
 from PIL import Image
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from .overlap import drop_overlap_tags
 from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result

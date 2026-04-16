@@ -20,7 +20,7 @@ from typing import Mapping, Tuple
 
 import numpy as np
 from PIL import Image
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..data import load_image, ImageTyping, MultiImagesTyping, normalize_multi_images, restore_multi_images_result
 from ..utils import open_onnx_model, ts_lru_cache
@@ -64,7 +64,7 @@ def _image_preprocess(image, size: int = 224) -> np.ndarray:
     Preprocesses the image for NSFW prediction.
 
     The function loads the image, resizes it to the specified ``size``, and converts it to a numpy array.
-    The pixel values are normalized to the range :math:`\left[0, 1\right]`.
+    The pixel values are normalized to the range :``[0, 1]``.
 
     :param image: The image to preprocess.
     :type image: ImageTyping

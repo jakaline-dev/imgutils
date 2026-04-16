@@ -14,7 +14,7 @@ import onnxruntime
 import pandas as pd
 from PIL import Image
 from hbutils.testing.requires.version import VersionInfo
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from .format import remove_underline
 from .overlap import drop_overlap_tags

@@ -37,7 +37,7 @@ from typing import Union, Dict, Any, Tuple, List
 
 import pandas as pd
 from hbutils.design import SingletonMark
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 
 from imgutils.data import (

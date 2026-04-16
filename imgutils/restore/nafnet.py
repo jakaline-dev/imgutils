@@ -25,7 +25,7 @@ from typing import Literal
 
 import numpy as np
 from PIL import Image
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..data import ImageTyping
 from ..generic import ImageEnhancer

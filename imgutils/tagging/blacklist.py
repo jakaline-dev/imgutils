@@ -4,7 +4,7 @@ Overview:
 """
 from typing import Union, List, Mapping, Set, Optional, Tuple
 
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from .match import _words_to_matcher, _split_to_words
 from ..utils import ts_lru_cache

@@ -22,7 +22,7 @@ from typing import Optional, Literal
 import numpy as np
 import pandas as pd
 from hfutils.repository import hf_hub_repo_url
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..data import MultiImagesTyping, ImageTyping, load_images, normalize_multi_images, restore_multi_images_result
 from ..preprocess import create_pillow_transforms

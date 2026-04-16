@@ -6,6 +6,7 @@ from .area import *
 from .cache import *
 from .format import *
 from .func import *
+from .hf import *
 from .onnxruntime import *
 from .storage import *
 from .tqdm_ import *

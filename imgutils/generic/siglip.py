@@ -24,7 +24,7 @@ import requests
 from hfutils.operate import get_hf_client, get_hf_fs
 from hfutils.repository import hf_hub_repo_url
 from hfutils.utils import hf_normpath, hf_fs_path, parse_hf_fs_path
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from huggingface_hub.errors import OfflineModeIsEnabled
 from tokenizers import Tokenizer
 

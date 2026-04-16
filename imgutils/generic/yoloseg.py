@@ -26,7 +26,7 @@ from hbutils.color import rnd_colors
 from hfutils.operate import get_hf_fs, get_hf_client
 from hfutils.repository import hf_hub_repo_url
 from hfutils.utils import hf_fs_path, hf_normpath
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from huggingface_hub.errors import OfflineModeIsEnabled, EntryNotFoundError
 
 from .yolo import _OFFLINE, _safe_eval_names_str, _image_preprocess, _yolo_xywh2xyxy, _yolo_nms, _xy_postprocess

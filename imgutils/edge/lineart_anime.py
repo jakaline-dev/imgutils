@@ -6,7 +6,7 @@ from functools import partial
 from typing import Optional
 
 import numpy as np
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ._base import resize_image, cv2_resize, _get_image_edge
 from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result

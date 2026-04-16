@@ -22,7 +22,7 @@ from PIL import Image
 from hfutils.operate import get_hf_client, get_hf_fs
 from hfutils.repository import hf_hub_repo_url
 from hfutils.utils import hf_fs_path, hf_normpath
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, OfflineModeIsEnabled
 
 from ..data import (

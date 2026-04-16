@@ -17,7 +17,7 @@ Overview:
 from typing import Dict, Optional, Tuple
 
 import numpy as np
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..data import ImageTyping
 from ..generic import ClassifyModel

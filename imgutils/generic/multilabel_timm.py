@@ -32,7 +32,7 @@ import pandas as pd
 from hbutils.design import SingletonMark
 from hbutils.string import titleize
 from hfutils.repository import hf_hub_repo_url
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 
 from ..data import MultiImagesTyping, ImageTyping, load_images, normalize_multi_images, restore_multi_images_result

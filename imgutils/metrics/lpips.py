@@ -16,7 +16,7 @@ from typing import Tuple, Union, List
 
 import numpy as np
 from PIL import Image
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from sklearn.cluster import DBSCAN
 from tqdm.auto import tqdm
 

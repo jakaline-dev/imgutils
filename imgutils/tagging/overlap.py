@@ -2,7 +2,7 @@ import copy
 import json
 from typing import Mapping, List, Union
 
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..utils import ts_lru_cache
 

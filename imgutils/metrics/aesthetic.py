@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from deprecation import deprecated
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from ..config.meta import __VERSION__
 from ..data import ImageTyping, MultiImagesTyping, load_image, normalize_multi_images, restore_multi_images_result

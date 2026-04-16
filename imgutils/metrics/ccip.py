@@ -29,7 +29,7 @@ from typing import Literal, Union, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 from sklearn.cluster import DBSCAN, OPTICS
 from tqdm.auto import tqdm
 

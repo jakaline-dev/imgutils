@@ -15,7 +15,7 @@ from typing import List, Tuple, Dict, Optional, Union, Literal, Any
 
 import numpy as np
 import pandas as pd
-from huggingface_hub import hf_hub_download
+from ..utils.hf import hf_hub_download
 
 from .format import remove_underline
 from .overlap import drop_overlap_tags

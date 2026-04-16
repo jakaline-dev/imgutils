@@ -50,7 +50,7 @@ def istack(*items: Union[ImageTyping, str, Tuple[ImageTyping, _AlphaTyping], Tup
     :param items: The layers that need to be stacked. If a PIL object or the file path of an image is given,
         the image will be used as a layer; if a color is given, the color will be used as a layer.
         Additionally, if a tuple is given, the second element represents the transparency,
-        with a value range of :math:`\\left[0, 1\\right]`. It can be a float type or a two-dimensional numpy array
+        with a value range of ``[0, 1]``. It can be a float type or a two-dimensional numpy array
         in the format of ``float32[H, W]`` which represents the transparency of each position.
     :param size: The size of the target image. By default, the size of the first image object in the `items` list
         will be used. However, when all layers are solid colors, this parameter is required.

@@ -3,7 +3,8 @@ from typing import List
 import cv2
 import numpy as np
 import pyclipper
-from huggingface_hub import hf_hub_download, HfFileSystem
+from huggingface_hub import HfFileSystem
+from ..utils.hf import hf_hub_download
 from shapely import Polygon
 
 from ..data import ImageTyping, load_image

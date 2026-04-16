@@ -1,7 +1,8 @@
 from typing import List, Tuple
 
 import numpy as np
-from huggingface_hub import hf_hub_download, HfFileSystem
+from huggingface_hub import HfFileSystem
+from ..utils.hf import hf_hub_download
 
 from ..data import ImageTyping, load_image
 from ..utils import open_onnx_model, ts_lru_cache
