@@ -16,9 +16,10 @@ This module is particularly useful for applications that require image preproces
 from os import PathLike
 from typing import Union, BinaryIO, List, Tuple, Optional
 
-from PIL import Image
+from PIL import Image, ImageFile
 
 Image.MAX_IMAGE_PIXELS = None
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 __all__ = [
     'ImageTyping',
