@@ -18,6 +18,8 @@ from typing import Union, BinaryIO, List, Tuple, Optional
 
 from PIL import Image
 
+Image.MAX_IMAGE_PIXELS = None
+
 __all__ = [
     'ImageTyping',
     'load_image',
